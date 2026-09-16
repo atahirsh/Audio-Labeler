@@ -58,12 +58,12 @@
             </div>
             <!-- Model Selection Dropdown -->
             <select id="model-select" class="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="Xenova/whisper-tiny" selected>OpenAI Whisper Tiny (Xenova ONNX ~39 MB - Recommended)</option>
-                <option value="onnx-community/whisper-tiny">OpenAI Whisper Tiny (onnx-community ~39 MB)</option>
-                <option value="Xenova/whisper-tiny.en">OpenAI Whisper Tiny English-Only (~39 MB)</option>
-                <option value="Xenova/whisper-base">OpenAI Whisper Base (Xenova ONNX ~75 MB)</option>
-                <option value="Xenova/whisper-small">OpenAI Whisper Small (Xenova ONNX ~244 MB)</option>
-                <option value="openai/whisper-tiny">openai/whisper-tiny (Original PyTorch Repo - No ONNX)</option>
+                <option value="Xenova/whisper-tiny" selected>Whisper Tiny Multilingual (Xenova ONNX ~39 MB - Recommended)</option>
+                <option value="Xenova/whisper-tiny.en">Whisper Tiny English-Only (Xenova ONNX ~39 MB)</option>
+                <option value="onnx-community/whisper-tiny">Whisper Tiny Multilingual (onnx-community ~39 MB)</option>
+                <option value="Xenova/whisper-base">Whisper Base Multilingual (Xenova ONNX ~75 MB)</option>
+                <option value="onnx-community/whisper-base.en">Whisper Base English-Only (onnx-community ~75 MB)</option>
+                <option value="Xenova/whisper-small">Whisper Small Multilingual (Xenova ONNX ~244 MB)</option>
             </select>
             <button id="btn-download-model" class="bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-md hover:bg-blue-100 transition font-medium flex items-center gap-2">
                 <i class="fas fa-cloud-download-alt"></i> Load Model
@@ -210,8 +210,11 @@
                 self.postMessage({ status: 'error', error: 'Failed to import transformers library: ' + err.message });
             }
             
-            const { pipeline, env } = self.transformers || {};
+            // Extract pipeline and env safely from global scope (handles both self.pipeline and self.transformers.pipeline)
+            const getPipeline = () => self.pipeline || (self.transformers && self.transformers.pipeline);
+            const getEnv = () => self.env || (self.transformers && self.transformers.env);
             
+            const env = getEnv();
             if (env) {
                 // Explicit Hugging Face CDN routing & WASM path setup for Web Workers on GitHub Pages
                 env.allowLocalModels = false;
@@ -232,8 +235,13 @@
                 if (type === 'load_model' || type === 'load_and_transcribe') {
                     if (!transcriber || loadedModelName !== targetModel) {
                         try {
+                            const pipeline = getPipeline();
+                            if (typeof pipeline !== 'function') {
+                                throw new Error("Transformers library did not expose 'pipeline' function on worker scope.");
+                            }
+
                             if (targetModel.startsWith('openai/')) {
-                                throw new Error("The official 'openai/' Hugging Face repos contain PyTorch weights (.safetensors), not ONNX browser weights. Please select 'Xenova/' or 'onnx-community/' to run OpenAI Whisper inside the browser.");
+                                throw new Error("The 'openai/' PyTorch weights are not browser-compatible. Automatically select 'Xenova/' or 'onnx-community/' ONNX models instead.");
                             }
 
                             self.postMessage({ status: 'loading', message: 'Downloading & Initializing ' + targetModel + ' from Hugging Face Hub...' });
