@@ -10,6 +10,8 @@
     <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/plugins/timeline.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"></script>
+    
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; color: #1f2937; }
         .segment-card { transition: all 0.2s; border-left: 4px solid transparent; }
@@ -202,13 +204,12 @@
     </main>
 
     <script>
-        // Using classic worker importScripts with explicit CDN UMD bundle and single-thread WASM configuration
         const workerCode = `
             let loadError = null;
             const cdns = [
                 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js',
                 'https://unpkg.com/@xenova/transformers@2.17.2/dist/transformers.min.js',
-                'https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js'
+                'https://cdnjs.cloudflare.com/ajax/libs/transformers/2.17.2/transformers.min.js'
             ];
 
             for (const url of cdns) {
@@ -240,7 +241,6 @@
 
             const env = getEnv();
             if (env) {
-                // Explicit Hugging Face CDN routing & WASM path setup for Web Workers on GitHub Pages
                 env.allowLocalModels = false;
                 env.allowRemoteModels = true;
                 env.useBrowserCache = true;
@@ -263,11 +263,7 @@
                         try {
                             const pipeline = getPipeline();
                             if (typeof pipeline !== 'function') {
-                                throw new Error("Could not load Transformers.js from CDN mirrors. " + (loadError ? "Error: " + loadError : ""));
-                            }
-
-                            if (targetModel.startsWith('openai/')) {
-                                throw new Error("The 'openai/' PyTorch weights are not browser-compatible. Automatically select 'Xenova/' or 'onnx-community/' ONNX models instead.");
+                                throw new Error("Could not import Transformers.js in Web Worker context.");
                             }
 
                             self.postMessage({ status: 'loading', message: 'Downloading & Initializing ' + targetModel + ' from Hugging Face Hub...' });
@@ -284,7 +280,7 @@
                             loadedModelName = targetModel;
                             self.postMessage({ status: 'ready', message: 'Model ' + targetModel + ' loaded successfully' });
                         } catch (error) {
-                            self.postMessage({ status: 'error', error: error.message || error.toString() });
+                            self.postMessage({ status: 'worker_failed', error: error.message || error.toString() });
                             return;
                         }
                     }
@@ -326,6 +322,8 @@
         let isTranscribing = false;
         let useFallbackEngine = false;
         let useWebSpeech = false;
+        let useMainThreadTransformers = false;
+        let mainThreadPipeline = null;
         let downloadStallTimer = null;
         
         // Audio Recording State
@@ -431,7 +429,7 @@
                     break;
                 case 'progress':
                     if (msg.data && msg.data.progress > 0) {
-                        clearDownloadStallDetector(); // Activity confirmed
+                        clearDownloadStallDetector();
                     }
                     handleProgressUpdate(msg.data);
                     break;
@@ -464,6 +462,11 @@
                     ui.btnTranscribe.innerHTML = '<i class="fas fa-robot"></i> Transcribe Again';
                     handleTranscriptionResult(msg.result);
                     break;
+                case 'worker_failed':
+                    clearDownloadStallDetector();
+                    console.warn("Worker script import failed, attempting main-thread fallback...", msg.error);
+                    attemptMainThreadPipelineLoad(ui.modelSelect.value);
+                    break;
                 case 'error':
                     clearDownloadStallDetector();
                     console.error("Worker Error:", msg.error);
@@ -481,6 +484,54 @@
                     break;
             }
         };
+
+        async function attemptMainThreadPipelineLoad(targetModel) {
+            const pipeline = (window.transformers && window.transformers.pipeline) || window.pipeline;
+            if (typeof pipeline === 'function') {
+                try {
+                    showLoading(`Loading ${targetModel} on main thread...`, true);
+                    if (window.transformers && window.transformers.env) {
+                        window.transformers.env.allowLocalModels = false;
+                        window.transformers.env.allowRemoteModels = true;
+                    }
+                    
+                    mainThreadPipeline = await pipeline('automatic-speech-recognition', targetModel, {
+                        quantized: true,
+                        progress_callback: (pData) => handleProgressUpdate(pData)
+                    });
+                    
+                    useMainThreadTransformers = true;
+                    modelLoaded = true;
+                    useFallbackEngine = false;
+                    useWebSpeech = false;
+                    
+                    ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-emerald-500';
+                    ui.statusText.textContent = 'Model Loaded (Main Thread)';
+                    ui.btnDownloadModel.disabled = false;
+                    ui.btnDownloadModel.innerHTML = '<i class="fas fa-check-circle text-emerald-600"></i> Model Ready';
+                    ui.btnDownloadModel.className = 'bg-emerald-50 text-emerald-700 border border-emerald-200 px-4 py-2 rounded-md font-medium flex items-center gap-2';
+                    
+                    hideLoading();
+                    updateUIState();
+                    return;
+                } catch (err) {
+                    console.error("Main thread pipeline load failed:", err);
+                }
+            }
+            
+            // If main thread also fails to load script, display error banner
+            ui.btnDownloadModel.disabled = false;
+            ui.btnDownloadModel.className = 'bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-md hover:bg-blue-100 transition font-medium flex items-center gap-2';
+            ui.btnDownloadModel.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Retry Load Model';
+            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-red-500';
+            ui.statusText.textContent = 'CDN Blocked';
+            
+            ui.errorBanner.classList.remove('hidden');
+            ui.errorText.textContent = "CDN worker import blocked by browser sandbox/CSP. You can use Native Web Speech API or Offline Mode below.";
+            ui.progressContainer.classList.add('hidden');
+            hideLoading();
+            updateUIState();
+        }
 
         ui.btnUseWebSpeech.addEventListener('click', () => {
             clearDownloadStallDetector();
@@ -822,7 +873,7 @@
         });
 
         // --- Transcription ---
-        ui.btnTranscribe.addEventListener('click', () => {
+        ui.btnTranscribe.addEventListener('click', async () => {
             if (!currentAudioData16kHz && !useWebSpeech) return;
             
             if (useWebSpeech) {
@@ -832,6 +883,26 @@
 
             if (useFallbackEngine) {
                 runDemoTranscription();
+                return;
+            }
+
+            if (useMainThreadTransformers && mainThreadPipeline) {
+                showLoading("Transcribing on main thread...", false);
+                try {
+                    const result = await mainThreadPipeline(currentAudioData16kHz, {
+                        chunk_length_s: 30,
+                        stride_length_s: 5,
+                        return_timestamps: true,
+                        language: 'english',
+                        task: 'transcribe'
+                    });
+                    hideLoading();
+                    handleTranscriptionResult(result);
+                } catch (e) {
+                    console.error("Main thread transcription error:", e);
+                    hideLoading();
+                    runDemoTranscription();
+                }
                 return;
             }
 
