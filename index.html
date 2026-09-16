@@ -58,11 +58,12 @@
             </div>
             <!-- Model Selection Dropdown -->
             <select id="model-select" class="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="Xenova/whisper-tiny" selected>Xenova / Whisper Tiny (~39 MB - Recommended)</option>
-                <option value="onnx-community/whisper-tiny">onnx-community / Whisper Tiny (~39 MB - v3 Repo)</option>
-                <option value="Xenova/whisper-tiny.en">Xenova / Whisper Tiny English (~39 MB)</option>
-                <option value="Xenova/whisper-base">Xenova / Whisper Base (~75 MB)</option>
-                <option value="Xenova/whisper-small">Xenova / Whisper Small (~244 MB - Heavy)</option>
+                <option value="Xenova/whisper-tiny" selected>OpenAI Whisper Tiny (Xenova ONNX ~39 MB - Recommended)</option>
+                <option value="onnx-community/whisper-tiny">OpenAI Whisper Tiny (onnx-community ~39 MB)</option>
+                <option value="Xenova/whisper-tiny.en">OpenAI Whisper Tiny English-Only (~39 MB)</option>
+                <option value="Xenova/whisper-base">OpenAI Whisper Base (Xenova ONNX ~75 MB)</option>
+                <option value="Xenova/whisper-small">OpenAI Whisper Small (Xenova ONNX ~244 MB)</option>
+                <option value="openai/whisper-tiny">openai/whisper-tiny (Original PyTorch Repo - No ONNX)</option>
             </select>
             <button id="btn-download-model" class="bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-md hover:bg-blue-100 transition font-medium flex items-center gap-2">
                 <i class="fas fa-cloud-download-alt"></i> Load Model
@@ -201,18 +202,25 @@
     </main>
 
     <script>
-        // Using classic worker importScripts with explicit CDN and timeout handling
+        // Using classic worker importScripts with explicit CDN UMD bundle and single-thread WASM configuration
         const workerCode = `
-            self.importScripts('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+            try {
+                self.importScripts('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+            } catch (err) {
+                self.postMessage({ status: 'error', error: 'Failed to import transformers library: ' + err.message });
+            }
             
-            const { pipeline, env } = self.transformers;
+            const { pipeline, env } = self.transformers || {};
             
-            // Explicit Hugging Face CDN routing & WASM path setup for Web Workers
-            env.allowLocalModels = false;
-            env.allowRemoteModels = true;
-            env.useBrowserCache = true;
-            env.backends.onnx.wasm.numThreads = 1;
-            env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
+            if (env) {
+                // Explicit Hugging Face CDN routing & WASM path setup for Web Workers on GitHub Pages
+                env.allowLocalModels = false;
+                env.allowRemoteModels = true;
+                env.useBrowserCache = true;
+                env.backends.onnx.wasm.numThreads = 1;
+                env.backends.onnx.wasm.proxy = false;
+                env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
+            }
             
             let transcriber = null;
             let loadedModelName = null;
@@ -224,6 +232,10 @@
                 if (type === 'load_model' || type === 'load_and_transcribe') {
                     if (!transcriber || loadedModelName !== targetModel) {
                         try {
+                            if (targetModel.startsWith('openai/')) {
+                                throw new Error("The official 'openai/' Hugging Face repos contain PyTorch weights (.safetensors), not ONNX browser weights. Please select 'Xenova/' or 'onnx-community/' to run OpenAI Whisper inside the browser.");
+                            }
+
                             self.postMessage({ status: 'loading', message: 'Downloading & Initializing ' + targetModel + ' from Hugging Face Hub...' });
                             
                             const progress_callback = (progressInfo) => {
@@ -336,6 +348,18 @@
         const blob = new Blob([workerCode], { type: 'application/javascript' });
         const workerUrl = URL.createObjectURL(blob);
         const worker = new Worker(workerUrl);
+
+        // Catch top-level Web Worker errors (e.g. script import or security policy failures)
+        worker.onerror = (err) => {
+            console.error("Worker script error:", err);
+            clearDownloadStallDetector();
+            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-red-500';
+            ui.statusText.textContent = 'Worker Error';
+            ui.errorBanner.classList.remove('hidden');
+            ui.errorText.textContent = "Web Worker Error: Failed to load background dependencies. " + (err.message || "");
+            hideLoading();
+            updateUIState();
+        };
 
         // Download progress map: filename -> { progress, loaded, total, status }
         let downloadFiles = {};
