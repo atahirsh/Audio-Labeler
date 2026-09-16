@@ -204,27 +204,53 @@
     <script>
         // Using classic worker importScripts with explicit CDN UMD bundle and single-thread WASM configuration
         const workerCode = `
-            try {
-                self.importScripts('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
-            } catch (err) {
-                self.postMessage({ status: 'error', error: 'Failed to import transformers library: ' + err.message });
+            let loadError = null;
+            const cdns = [
+                'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js',
+                'https://unpkg.com/@xenova/transformers@2.17.2/dist/transformers.min.js',
+                'https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js'
+            ];
+
+            for (const url of cdns) {
+                try {
+                    self.importScripts(url);
+                    if ((self.transformers && typeof self.transformers.pipeline === 'function') || typeof self.pipeline === 'function') {
+                        loadError = null;
+                        break;
+                    }
+                } catch (err) {
+                    loadError = err.message || String(err);
+                }
             }
-            
-            // Extract pipeline and env safely from global scope (handles both self.pipeline and self.transformers.pipeline)
-            const getPipeline = () => self.pipeline || (self.transformers && self.transformers.pipeline);
-            const getEnv = () => self.env || (self.transformers && self.transformers.env);
-            
+
+            // Extract pipeline and env safely from global scope
+            const getPipeline = () => {
+                if (typeof self.pipeline === 'function') return self.pipeline;
+                if (self.transformers && typeof self.transformers.pipeline === 'function') {
+                    return self.transformers.pipeline.bind(self.transformers);
+                }
+                return null;
+            };
+
+            const getEnv = () => {
+                if (self.env) return self.env;
+                if (self.transformers && self.transformers.env) return self.transformers.env;
+                return null;
+            };
+
             const env = getEnv();
             if (env) {
                 // Explicit Hugging Face CDN routing & WASM path setup for Web Workers on GitHub Pages
                 env.allowLocalModels = false;
                 env.allowRemoteModels = true;
                 env.useBrowserCache = true;
-                env.backends.onnx.wasm.numThreads = 1;
-                env.backends.onnx.wasm.proxy = false;
-                env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
+                if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
+                    env.backends.onnx.wasm.numThreads = 1;
+                    env.backends.onnx.wasm.proxy = false;
+                    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
+                }
             }
-            
+
             let transcriber = null;
             let loadedModelName = null;
 
@@ -237,7 +263,7 @@
                         try {
                             const pipeline = getPipeline();
                             if (typeof pipeline !== 'function') {
-                                throw new Error("Transformers library did not expose 'pipeline' function on worker scope.");
+                                throw new Error("Could not load Transformers.js from CDN mirrors. " + (loadError ? "Error: " + loadError : ""));
                             }
 
                             if (targetModel.startsWith('openai/')) {
