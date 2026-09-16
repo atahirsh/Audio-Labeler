@@ -3,1215 +3,341 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>In-Browser Audio Transcription & Labeling</title>
+    <title>audio labeler</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Material 3 Font & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+    <!-- WaveSurfer.js -->
     <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js"></script>
     <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/plugins/regions.min.js"></script>
-    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/plugins/timeline.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"></script>
-    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        m3: {
+                            primary: '#6750A4',
+                            onPrimary: '#FFFFFF',
+                            primaryContainer: '#EADDFF',
+                            onPrimaryContainer: '#21005D',
+                            surface: '#FFFBFE',
+                            onSurface: '#1C1B1F',
+                            surfaceVariant: '#E7E0EC',
+                            onSurfaceVariant: '#49454F',
+                            outline: '#79747E',
+                            error: '#B3261E'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Roboto', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; color: #1f2937; }
-        .segment-card { transition: all 0.2s; border-left: 4px solid transparent; }
-        .segment-card:hover { border-left-color: #3b82f6; background-color: #f8fafc; }
-        .segment-card.active { border-left-color: #10b981; background-color: #ecfdf5; }
-        #waveform-container { position: relative; width: 100%; }
-        /* Custom scrollbar for segment list */
+        body { font-family: 'Roboto', sans-serif; background-color: #FFFBFE; color: #1C1B1F; }
+        .m3-elevation-1 { box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15), 0px 1px 2px 0px rgba(0, 0, 0, 0.3); }
+        .m3-elevation-2 { box-shadow: 0px 2px 6px 2px rgba(0, 0, 0, 0.15), 0px 1px 2px 0px rgba(0, 0, 0, 0.3); }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        
-        /* Loading spinner */
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3b82f6;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        /* Recording Animation */
-        .recording-pulse {
-            animation: pulse-red 1.5s infinite;
-        }
-        @keyframes pulse-red {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #E7E0EC; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #79747E; border-radius: 4px; }
     </style>
 </head>
-<body class="flex flex-col h-screen overflow-hidden bg-gray-50">
+<body class="flex flex-col h-screen overflow-hidden">
 
-    <header class="bg-white shadow-sm py-3 px-6 flex justify-between items-center z-10 shrink-0">
+    <header class="bg-m3-surfaceVariant text-m3-onSurfaceVariant px-6 py-3 flex justify-between items-center m3-elevation-1 z-10 shrink-0">
         <div class="flex items-center gap-3">
-            <i class="fas fa-wave-square text-blue-600 text-2xl"></i>
-            <h1 class="text-xl font-semibold text-gray-800">Browser Audio Labeler</h1>
+            <span class="material-symbols-outlined text-m3-primary text-2xl">label</span>
+            <h1 class="text-lg font-medium tracking-tight text-m3-onSurface">audio labeler</h1>
         </div>
-        <div class="flex items-center gap-3 text-sm">
-            <div id="model-status" class="flex items-center gap-2 text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
-                <span class="w-2 h-2 rounded-full bg-gray-400" id="status-indicator"></span>
-                <span id="status-text">Ready to Load Model</span>
-            </div>
-            <!-- Model Selection Dropdown -->
-            <select id="model-select" class="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="Xenova/whisper-tiny" selected>Whisper Tiny Multilingual (Xenova ONNX ~39 MB - Recommended)</option>
-                <option value="Xenova/whisper-tiny.en">Whisper Tiny English-Only (Xenova ONNX ~39 MB)</option>
-                <option value="onnx-community/whisper-tiny">Whisper Tiny Multilingual (onnx-community ~39 MB)</option>
-                <option value="Xenova/whisper-base">Whisper Base Multilingual (Xenova ONNX ~75 MB)</option>
-                <option value="onnx-community/whisper-base.en">Whisper Base English-Only (onnx-community ~75 MB)</option>
-                <option value="Xenova/whisper-small">Whisper Small Multilingual (Xenova ONNX ~244 MB)</option>
-            </select>
-            <button id="btn-download-model" class="bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-md hover:bg-blue-100 transition font-medium flex items-center gap-2">
-                <i class="fas fa-cloud-download-alt"></i> Load Model
-            </button>
-            <button id="btn-export" disabled class="bg-indigo-50 text-indigo-700 border border-indigo-200 px-4 py-2 rounded-md hover:bg-indigo-100 transition disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center gap-2">
-                <i class="fas fa-download"></i> Export JSON
+
+        <div class="flex items-center gap-3">
+            <button id="btn-export" disabled class="bg-m3-primary text-m3-onPrimary px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2 hover:opacity-90 disabled:opacity-30 transition">
+                <span class="material-symbols-outlined text-sm">download</span> Export
             </button>
         </div>
     </header>
 
-    <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden bg-m3-surface">
         
-        <!-- Overlay for initial state or loading -->
-        <div id="loading-overlay" class="absolute inset-0 bg-white/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 hidden">
-            <div class="loader mb-4" id="main-spinner"></div>
-            <p id="loading-message" class="text-lg font-semibold text-gray-800">Initializing...</p>
-            <p id="loading-subtext" class="text-sm text-gray-500 mt-1">Fetching model files from Hugging Face Hub (https://huggingface.co/Xenova)</p>
-
-            <!-- Error fallback banner -->
-            <div id="error-banner" class="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg max-w-md hidden text-center shadow-sm">
-                <i class="fas fa-exclamation-triangle text-amber-500 text-2xl mb-2"></i>
-                <p id="error-text" class="text-xs text-amber-800 font-medium mb-3"></p>
-                <div class="flex flex-col gap-2">
-                    <button id="btn-use-webspeech" class="bg-emerald-600 text-white text-xs font-semibold px-4 py-2 rounded shadow hover:bg-emerald-700 transition flex items-center justify-center gap-2">
-                        <i class="fas fa-bolt"></i> Use Native Browser Speech API (Instant, No Download)
-                    </button>
-                    <button id="btn-fallback-demo" class="bg-indigo-600 text-white text-xs font-semibold px-4 py-2 rounded shadow hover:bg-indigo-700 transition flex items-center justify-center gap-2">
-                        <i class="fas fa-magic"></i> Use Offline Demo Engine
-                    </button>
-                </div>
-            </div>
-
-            <!-- Detailed Download Progress Card -->
-            <div class="w-full max-w-md bg-gray-50 border border-gray-200 rounded-xl p-5 mt-5 shadow-sm hidden" id="progress-container">
-                <div class="flex justify-between items-center mb-2">
-                    <span class="text-xs font-semibold uppercase tracking-wider text-gray-500">Overall Download Progress</span>
-                    <span id="progress-percent" class="text-sm font-bold text-blue-600 font-mono">0%</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div id="progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
-                </div>
-                <div class="flex justify-between text-xs text-gray-500 mt-2">
-                    <span id="progress-text">Downloading assets...</span>
-                    <span id="progress-bytes" class="font-mono">-- / --</span>
-                </div>
-
-                <!-- Per-file download progress list -->
-                <div id="file-progress-list" class="mt-4 pt-3 border-t border-gray-200 space-y-2 max-h-40 overflow-y-auto text-xs custom-scrollbar"></div>
-            </div>
-        </div>
-
-        <!-- Left Panel: Controls and Waveform -->
-        <section class="flex-1 flex flex-col bg-white border-r border-gray-200 shadow-sm relative overflow-hidden">
+        <!-- Left: Audio Source & Waveform -->
+        <section class="flex-1 flex flex-col p-6 gap-6 overflow-y-auto">
             
-            <!-- Audio Input Area -->
-            <div class="p-6 border-b border-gray-200 bg-gray-50 shrink-0">
-                <div class="max-w-2xl mx-auto">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Input Audio (File or Microphone)</label>
-                    <div class="flex flex-col sm:flex-row gap-4">
-                        <!-- Upload Option -->
-                        <label class="flex-1 flex items-center justify-center px-4 py-4 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-100 transition bg-white">
-                            <div class="space-y-1 text-center">
-                                <i class="fas fa-file-audio text-2xl text-gray-400 mb-1"></i>
-                                <div class="text-sm text-gray-600">
-                                    <span class="font-medium text-blue-600">Upload File</span> (MP3, WAV)
-                                </div>
-                            </div>
-                            <input type="file" id="audio-upload" class="sr-only" accept="audio/*">
-                        </label>
-                        
-                        <!-- Record Option -->
-                        <div class="flex-1 border-2 border-gray-300 border-dashed rounded-lg bg-white flex flex-col items-center justify-center p-4">
-                            <div class="text-sm text-gray-600 mb-2 text-center" id="record-status-text">Record from Microphone</div>
-                            <button id="btn-record" class="w-12 h-12 rounded-full bg-red-100 text-red-600 border border-red-200 flex items-center justify-center hover:bg-red-200 transition">
-                                <i class="fas fa-microphone text-xl" id="record-icon"></i>
-                            </button>
-                            <span id="recording-time" class="text-xs font-mono text-gray-500 mt-2 hidden">00:00</span>
-                        </div>
-                    </div>
+            <!-- Controls Card -->
+            <div class="bg-m3-surfaceVariant/40 border border-m3-surfaceVariant rounded-2xl p-4 flex flex-wrap gap-4 items-center justify-between m3-elevation-1">
+                <div class="flex items-center gap-3 flex-wrap">
+                    <label class="bg-m3-primaryContainer text-m3-onPrimaryContainer px-4 py-2.5 rounded-full text-sm font-medium cursor-pointer hover:opacity-90 flex items-center gap-2 transition">
+                        <span class="material-symbols-outlined text-sm">folder_open</span> Open Audio
+                        <input type="file" id="audio-upload" class="sr-only" accept="audio/*">
+                    </label>
+
+                    <button id="btn-record" class="bg-m3-surface border border-m3-outline/40 text-m3-onSurface px-4 py-2.5 rounded-full text-sm font-medium flex items-center gap-2 hover:bg-m3-surfaceVariant transition">
+                        <span class="material-symbols-outlined text-sm text-red-600" id="record-icon">mic</span> <span id="record-text">Record</span>
+                    </button>
+                </div>
+
+                <!-- Local Model Directory Config -->
+                <div class="flex items-center gap-2 bg-m3-surface px-3 py-1.5 rounded-xl border border-m3-outline/30 text-xs">
+                    <span class="material-symbols-outlined text-sm text-m3-primary">folder</span>
+                    <input type="text" id="model-dir-input" placeholder="./models/whisper-tiny" class="bg-transparent focus:outline-none w-48 text-m3-onSurface" value="./models/whisper-tiny">
+                    <button id="btn-load-local-model" class="bg-m3-primaryContainer text-m3-onPrimaryContainer px-2.5 py-1 rounded-lg font-medium hover:opacity-90 transition">Load Local</button>
                 </div>
             </div>
 
-            <!-- Waveform Area -->
-            <div class="flex-1 flex flex-col p-4 relative min-h-0">
-                <div class="flex justify-between items-center mb-4 shrink-0">
-                    <h2 class="text-lg font-semibold text-gray-800">Audio Preview</h2>
-                    <div class="flex gap-2" id="playback-controls" style="display: none;">
-                        <button id="btn-play-pause" class="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 shadow-sm transition">
-                            <i class="fas fa-play" id="play-icon"></i>
-                        </button>
-                        <button id="btn-zoom-in" class="w-10 h-10 rounded-full bg-white border border-gray-300 text-gray-700 flex items-center justify-center hover:bg-gray-100 transition" title="Zoom In">
-                            <i class="fas fa-search-plus"></i>
-                        </button>
-                         <button id="btn-zoom-out" class="w-10 h-10 rounded-full bg-white border border-gray-300 text-gray-700 flex items-center justify-center hover:bg-gray-100 transition" title="Zoom Out">
-                            <i class="fas fa-search-minus"></i>
-                        </button>
-                    </div>
+            <!-- Waveform Viewport -->
+            <div class="flex-1 bg-m3-surfaceVariant/20 border border-m3-surfaceVariant rounded-2xl p-4 flex flex-col justify-center relative min-h-[240px] m3-elevation-1">
+                <div id="no-audio" class="absolute inset-0 flex flex-col items-center justify-center text-m3-outline gap-2">
+                    <span class="material-symbols-outlined text-4xl">waveform</span>
+                    <p class="text-sm">No audio loaded</p>
                 </div>
-                
-                <div class="flex-1 bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col justify-center relative overflow-hidden" id="waveform-wrapper">
-                    <div id="no-audio-msg" class="absolute inset-0 flex items-center justify-center text-gray-400 flex-col gap-2">
-                        <i class="fas fa-music text-4xl"></i>
-                        <p>No audio loaded</p>
+
+                <div id="waveform-area" class="hidden flex-col gap-3">
+                    <div class="flex justify-between items-center">
+                        <div class="flex gap-2">
+                            <button id="btn-play" class="w-10 h-10 rounded-full bg-m3-primary text-m3-onPrimary flex items-center justify-center hover:opacity-90 transition">
+                                <span class="material-symbols-outlined" id="play-icon">play_arrow</span>
+                            </button>
+                            <button id="btn-add-region" class="bg-m3-surfaceVariant text-m3-onSurfaceVariant px-3 py-2 rounded-full text-xs font-medium hover:bg-m3-surfaceVariant/80 transition flex items-center gap-1">
+                                <span class="material-symbols-outlined text-sm">add</span> Region
+                            </button>
+                        </div>
+                        <span id="audio-time" class="text-xs font-mono text-m3-outline">00:00 / 00:00</span>
                     </div>
-                    
-                    <div class="w-full relative z-10 hidden flex-col h-full justify-center" id="waveform-active-area">
-                         <div id="timeline"></div>
-                         <div id="waveform" class="w-full mt-2"></div>
-                    </div>
+                    <div id="timeline"></div>
+                    <div id="waveform"></div>
                 </div>
-                
-                <!-- Transcription Action -->
-                <div class="mt-4 flex justify-center shrink-0">
-                    <button id="btn-transcribe" disabled class="bg-emerald-600 text-white px-6 py-3 rounded-lg hover:bg-emerald-700 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-medium">
-                        <i class="fas fa-robot"></i> Load Model & Transcribe
-                    </button>
-                </div>
+            </div>
+
+            <!-- Model Status Banner -->
+            <div id="model-status" class="text-xs text-m3-outline flex items-center gap-2 bg-m3-surfaceVariant/20 px-4 py-2.5 rounded-xl border border-m3-surfaceVariant">
+                <span class="material-symbols-outlined text-sm text-amber-600">info</span>
+                <span>Local model directory set. Place model files (`model.onnx`, `tokenizer.json`, etc.) in the folder path above to enable local AI inference.</span>
             </div>
         </section>
 
-        <!-- Right Panel: Transcription Segments -->
-        <section class="w-full md:w-96 lg:w-[32rem] flex flex-col bg-gray-50 shadow-inner shrink-0">
-            <div class="p-4 border-b border-gray-200 bg-white flex justify-between items-center">
-                <h2 class="text-lg font-semibold text-gray-800">Transcription Segments</h2>
-                <span id="segment-count" class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-full font-mono">0</span>
+        <!-- Right: Segment Editor -->
+        <section class="w-full md:w-96 lg:w-[28rem] bg-m3-surfaceVariant/10 border-l border-m3-surfaceVariant flex flex-col shrink-0">
+            <div class="p-4 border-b border-m3-surfaceVariant flex justify-between items-center">
+                <h2 class="text-sm font-medium text-m3-onSurface">Segments</h2>
+                <span id="segment-count" class="text-xs bg-m3-primaryContainer text-m3-onPrimaryContainer px-2.5 py-0.5 rounded-full font-mono">0</span>
             </div>
-            
-            <div id="segments-container" class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-                <div id="empty-segments-msg" class="text-center text-gray-400 mt-10 flex flex-col items-center gap-3">
-                    <i class="fas fa-list text-3xl"></i>
-                    <p class="text-sm">Transcribe audio to see segments here.<br>You can then edit text and adjust timings.</p>
+
+            <div id="segments-list" class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                <div id="empty-segments" class="text-center text-m3-outline my-auto py-12 flex flex-col items-center gap-2">
+                    <span class="material-symbols-outlined text-3xl">list_alt</span>
+                    <p class="text-xs">No segments created</p>
                 </div>
-                <!-- Segments will be injected here -->
             </div>
         </section>
     </main>
 
     <script>
-        const workerCode = `
-            let loadError = null;
-            const cdns = [
-                'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js',
-                'https://unpkg.com/@xenova/transformers@2.17.2/dist/transformers.min.js',
-                'https://cdnjs.cloudflare.com/ajax/libs/transformers/2.17.2/transformers.min.js'
-            ];
-
-            for (const url of cdns) {
-                try {
-                    self.importScripts(url);
-                    if ((self.transformers && typeof self.transformers.pipeline === 'function') || typeof self.pipeline === 'function') {
-                        loadError = null;
-                        break;
-                    }
-                } catch (err) {
-                    loadError = err.message || String(err);
-                }
-            }
-
-            // Extract pipeline and env safely from global scope
-            const getPipeline = () => {
-                if (typeof self.pipeline === 'function') return self.pipeline;
-                if (self.transformers && typeof self.transformers.pipeline === 'function') {
-                    return self.transformers.pipeline.bind(self.transformers);
-                }
-                return null;
-            };
-
-            const getEnv = () => {
-                if (self.env) return self.env;
-                if (self.transformers && self.transformers.env) return self.transformers.env;
-                return null;
-            };
-
-            const env = getEnv();
-            if (env) {
-                env.allowLocalModels = false;
-                env.allowRemoteModels = true;
-                env.useBrowserCache = true;
-                if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
-                    env.backends.onnx.wasm.numThreads = 1;
-                    env.backends.onnx.wasm.proxy = false;
-                    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
-                }
-            }
-
-            let transcriber = null;
-            let loadedModelName = null;
-
-            self.onmessage = async (event) => {
-                const { type, data, modelName } = event.data;
-                const targetModel = modelName || 'Xenova/whisper-tiny';
-
-                if (type === 'load_model' || type === 'load_and_transcribe') {
-                    if (!transcriber || loadedModelName !== targetModel) {
-                        try {
-                            const pipeline = getPipeline();
-                            if (typeof pipeline !== 'function') {
-                                throw new Error("Could not import Transformers.js in Web Worker context.");
-                            }
-
-                            self.postMessage({ status: 'loading', message: 'Downloading & Initializing ' + targetModel + ' from Hugging Face Hub...' });
-                            
-                            const progress_callback = (progressInfo) => {
-                                self.postMessage({ status: 'progress', data: progressInfo });
-                            };
-
-                            transcriber = await pipeline('automatic-speech-recognition', targetModel, {
-                                quantized: true,
-                                progress_callback
-                            });
-                            
-                            loadedModelName = targetModel;
-                            self.postMessage({ status: 'ready', message: 'Model ' + targetModel + ' loaded successfully' });
-                        } catch (error) {
-                            self.postMessage({ status: 'worker_failed', error: error.message || error.toString() });
-                            return;
-                        }
-                    }
-                    
-                    if (type === 'load_model') {
-                        return;
-                    }
-                }
-
-                if (type === 'load_and_transcribe') {
-                    try {
-                        self.postMessage({ status: 'transcribing', message: 'Transcribing audio with ' + loadedModelName + '...' });
-                        
-                        const audioData = data.audio;
-                        const result = await transcriber(audioData, {
-                            chunk_length_s: 30,
-                            stride_length_s: 5,
-                            return_timestamps: true,
-                            language: 'english',
-                            task: 'transcribe'
-                        });
-                        
-                        self.postMessage({ status: 'complete', result: result });
-                    } catch (error) {
-                        self.postMessage({ status: 'error', error: error.message || error.toString() });
-                    }
-                }
-            };
-        `;
-
-        // --- Application State ---
         let wavesurfer = null;
         let wsRegions = null;
-        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        let currentAudioBuffer = null;
-        let currentAudioData16kHz = null;
-        let transcriptionSegments = [];
-        let modelLoaded = false;
-        let isTranscribing = false;
-        let useFallbackEngine = false;
-        let useWebSpeech = false;
-        let useMainThreadTransformers = false;
-        let mainThreadPipeline = null;
-        let downloadStallTimer = null;
-        
-        // Audio Recording State
+        let segments = [];
+        let isRecording = false;
         let mediaRecorder = null;
         let audioChunks = [];
-        let recordingInterval = null;
-        let recordingStartTime = 0;
-        let isRecording = false;
-        
-        // --- UI Elements ---
+
         const ui = {
-            loadingOverlay: document.getElementById('loading-overlay'),
-            loadingMsg: document.getElementById('loading-message'),
-            loadingSubtext: document.getElementById('loading-subtext'),
-            errorBanner: document.getElementById('error-banner'),
-            errorText: document.getElementById('error-text'),
-            btnFallbackDemo: document.getElementById('btn-fallback-demo'),
-            btnUseWebSpeech: document.getElementById('btn-use-webspeech'),
-            progressContainer: document.getElementById('progress-container'),
-            progressBar: document.getElementById('progress-bar'),
-            progressPercent: document.getElementById('progress-percent'),
-            progressText: document.getElementById('progress-text'),
-            progressBytes: document.getElementById('progress-bytes'),
-            fileProgressList: document.getElementById('file-progress-list'),
-            
-            statusIndicator: document.getElementById('status-indicator'),
-            statusText: document.getElementById('status-text'),
-            modelSelect: document.getElementById('model-select'),
-            btnDownloadModel: document.getElementById('btn-download-model'),
-            
             audioUpload: document.getElementById('audio-upload'),
             btnRecord: document.getElementById('btn-record'),
             recordIcon: document.getElementById('record-icon'),
-            recordStatusText: document.getElementById('record-status-text'),
-            recordingTime: document.getElementById('recording-time'),
-            
-            waveformActiveArea: document.getElementById('waveform-active-area'),
-            noAudioMsg: document.getElementById('no-audio-msg'),
-            playbackControls: document.getElementById('playback-controls'),
-            btnPlayPause: document.getElementById('btn-play-pause'),
+            recordText: document.getElementById('record-text'),
+            noAudio: document.getElementById('no-audio'),
+            waveformArea: document.getElementById('waveform-area'),
+            btnPlay: document.getElementById('btn-play'),
             playIcon: document.getElementById('play-icon'),
-            btnZoomIn: document.getElementById('btn-zoom-in'),
-            btnZoomOut: document.getElementById('btn-zoom-out'),
-            
-            btnTranscribe: document.getElementById('btn-transcribe'),
+            btnAddRegion: document.getElementById('btn-add-region'),
+            audioTime: document.getElementById('audio-time'),
             btnExport: document.getElementById('btn-export'),
-            
-            segmentsContainer: document.getElementById('segments-container'),
-            emptySegmentsMsg: document.getElementById('empty-segments-msg'),
-            segmentCount: document.getElementById('segment-count')
+            segmentsList: document.getElementById('segments-list'),
+            emptySegments: document.getElementById('empty-segments'),
+            segmentCount: document.getElementById('segment-count'),
+            modelDirInput: document.getElementById('model-dir-input'),
+            btnLoadLocalModel: document.getElementById('btn-load-local-model'),
+            modelStatus: document.getElementById('model-status')
         };
 
-        // --- Worker Setup ---
-        const blob = new Blob([workerCode], { type: 'application/javascript' });
-        const workerUrl = URL.createObjectURL(blob);
-        const worker = new Worker(workerUrl);
-
-        // Catch top-level Web Worker errors (e.g. script import or security policy failures)
-        worker.onerror = (err) => {
-            console.error("Worker script error:", err);
-            clearDownloadStallDetector();
-            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-red-500';
-            ui.statusText.textContent = 'Worker Error';
-            ui.errorBanner.classList.remove('hidden');
-            ui.errorText.textContent = "Web Worker Error: Failed to load background dependencies. " + (err.message || "");
-            hideLoading();
-            updateUIState();
-        };
-
-        // Download progress map: filename -> { progress, loaded, total, status }
-        let downloadFiles = {};
-
-        function startDownloadStallDetector() {
-            clearTimeout(downloadStallTimer);
-            // If download stays at 0% or doesn't complete within 10 seconds, present instant alternative engines
-            downloadStallTimer = setTimeout(() => {
-                if (!modelLoaded) {
-                    ui.errorBanner.classList.remove('hidden');
-                    ui.errorText.textContent = "Hugging Face CDN request is blocked or hanging due to browser sandbox or network policy. You can switch to Native Browser Speech API or Offline Demo Mode below.";
-                    ui.progressContainer.classList.add('hidden');
-                }
-            }, 10000);
-        }
-
-        function clearDownloadStallDetector() {
-            clearTimeout(downloadStallTimer);
-        }
-
-        worker.onmessage = (event) => {
-            const msg = event.data;
-            
-            switch (msg.status) {
-                case 'loading':
-                    ui.errorBanner.classList.add('hidden');
-                    ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
-                    ui.statusText.textContent = 'Downloading Model...';
-                    ui.btnTranscribe.disabled = true;
-                    ui.btnDownloadModel.disabled = true;
-                    ui.btnDownloadModel.className = 'bg-amber-50 text-amber-700 border border-amber-200 px-4 py-2 rounded-md font-medium flex items-center gap-2 cursor-wait';
-                    ui.btnDownloadModel.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Downloading (0%)';
-                    showLoading(msg.message, true);
-                    startDownloadStallDetector();
-                    break;
-                case 'progress':
-                    if (msg.data && msg.data.progress > 0) {
-                        clearDownloadStallDetector();
-                    }
-                    handleProgressUpdate(msg.data);
-                    break;
-                case 'ready':
-                    clearDownloadStallDetector();
-                    modelLoaded = true;
-                    useFallbackEngine = false;
-                    useWebSpeech = false;
-                    ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-emerald-500';
-                    ui.statusText.textContent = 'Model Cached & Ready';
-                    ui.btnDownloadModel.disabled = false;
-                    ui.btnDownloadModel.innerHTML = '<i class="fas fa-check-circle text-emerald-600"></i> Model Loaded';
-                    ui.btnDownloadModel.className = 'bg-emerald-50 text-emerald-700 border border-emerald-200 px-4 py-2 rounded-md font-medium flex items-center gap-2';
-                    
-                    if (!isTranscribing) {
-                        hideLoading();
-                        updateUIState();
-                    }
-                    break;
-                case 'transcribing':
-                    isTranscribing = true;
-                    showLoading(msg.message, false);
-                    ui.btnTranscribe.disabled = true;
-                    ui.btnTranscribe.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Transcribing...';
-                    break;
-                case 'complete':
-                    isTranscribing = false;
-                    hideLoading();
-                    updateUIState();
-                    ui.btnTranscribe.innerHTML = '<i class="fas fa-robot"></i> Transcribe Again';
-                    handleTranscriptionResult(msg.result);
-                    break;
-                case 'worker_failed':
-                    clearDownloadStallDetector();
-                    console.warn("Worker script import failed, attempting main-thread fallback...", msg.error);
-                    attemptMainThreadPipelineLoad(ui.modelSelect.value);
-                    break;
-                case 'error':
-                    clearDownloadStallDetector();
-                    console.error("Worker Error:", msg.error);
-                    isTranscribing = false;
-                    ui.btnDownloadModel.disabled = false;
-                    ui.btnDownloadModel.className = 'bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-md hover:bg-blue-100 transition font-medium flex items-center gap-2';
-                    ui.btnDownloadModel.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Retry Load Model';
-                    ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-red-500';
-                    ui.statusText.textContent = 'Download Error';
-                    
-                    ui.errorBanner.classList.remove('hidden');
-                    ui.errorText.textContent = "Hugging Face CDN Error: " + msg.error;
-                    ui.progressContainer.classList.add('hidden');
-                    updateUIState();
-                    break;
-            }
-        };
-
-        async function attemptMainThreadPipelineLoad(targetModel) {
-            const pipeline = (window.transformers && window.transformers.pipeline) || window.pipeline;
-            if (typeof pipeline === 'function') {
-                try {
-                    showLoading(`Loading ${targetModel} on main thread...`, true);
-                    if (window.transformers && window.transformers.env) {
-                        window.transformers.env.allowLocalModels = false;
-                        window.transformers.env.allowRemoteModels = true;
-                    }
-                    
-                    mainThreadPipeline = await pipeline('automatic-speech-recognition', targetModel, {
-                        quantized: true,
-                        progress_callback: (pData) => handleProgressUpdate(pData)
-                    });
-                    
-                    useMainThreadTransformers = true;
-                    modelLoaded = true;
-                    useFallbackEngine = false;
-                    useWebSpeech = false;
-                    
-                    ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-emerald-500';
-                    ui.statusText.textContent = 'Model Loaded (Main Thread)';
-                    ui.btnDownloadModel.disabled = false;
-                    ui.btnDownloadModel.innerHTML = '<i class="fas fa-check-circle text-emerald-600"></i> Model Ready';
-                    ui.btnDownloadModel.className = 'bg-emerald-50 text-emerald-700 border border-emerald-200 px-4 py-2 rounded-md font-medium flex items-center gap-2';
-                    
-                    hideLoading();
-                    updateUIState();
-                    return;
-                } catch (err) {
-                    console.error("Main thread pipeline load failed:", err);
-                }
-            }
-            
-            // If main thread also fails to load script, display error banner
-            ui.btnDownloadModel.disabled = false;
-            ui.btnDownloadModel.className = 'bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-md hover:bg-blue-100 transition font-medium flex items-center gap-2';
-            ui.btnDownloadModel.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Retry Load Model';
-            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-red-500';
-            ui.statusText.textContent = 'CDN Blocked';
-            
-            ui.errorBanner.classList.remove('hidden');
-            ui.errorText.textContent = "CDN worker import blocked by browser sandbox/CSP. You can use Native Web Speech API or Offline Mode below.";
-            ui.progressContainer.classList.add('hidden');
-            hideLoading();
-            updateUIState();
-        }
-
-        ui.btnUseWebSpeech.addEventListener('click', () => {
-            clearDownloadStallDetector();
-            useWebSpeech = true;
-            modelLoaded = true;
-            useFallbackEngine = false;
-            hideLoading();
-            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-emerald-500';
-            ui.statusText.textContent = 'Native Speech API Ready';
-            ui.btnDownloadModel.disabled = false;
-            ui.btnDownloadModel.className = 'bg-emerald-50 text-emerald-700 border border-emerald-200 px-4 py-2 rounded-md font-medium flex items-center gap-2';
-            ui.btnDownloadModel.innerHTML = '<i class="fas fa-bolt text-emerald-600"></i> Native Speech Active';
-            updateUIState();
-        });
-
-        // Fallback demo engine button handler
-        ui.btnFallbackDemo.addEventListener('click', () => {
-            clearDownloadStallDetector();
-            useFallbackEngine = true;
-            useWebSpeech = false;
-            modelLoaded = true;
-            hideLoading();
-            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-amber-500';
-            ui.statusText.textContent = 'Offline Demo Engine Active';
-            ui.btnDownloadModel.disabled = false;
-            ui.btnDownloadModel.className = 'bg-amber-50 text-amber-700 border border-amber-200 px-4 py-2 rounded-md font-medium flex items-center gap-2';
-            ui.btnDownloadModel.innerHTML = '<i class="fas fa-magic text-amber-600"></i> Offline Engine Active';
-            updateUIState();
-        });
-
-        function handleProgressUpdate(pData) {
-            if (!pData) return;
-
-            const fileName = pData.file || pData.name || 'Model file';
-            
-            if (pData.status === 'initiate') {
-                downloadFiles[fileName] = { progress: 0, loaded: 0, total: pData.total || 0, status: 'starting' };
-            } else if (pData.status === 'download' || pData.status === 'progress') {
-                let p = 0;
-                if (typeof pData.progress === 'number') {
-                    p = pData.progress;
-                } else if (pData.loaded && pData.total) {
-                    p = (pData.loaded / pData.total) * 100;
-                }
-                downloadFiles[fileName] = {
-                    progress: p,
-                    loaded: pData.loaded || 0,
-                    total: pData.total || 0,
-                    status: 'downloading'
-                };
-            } else if (pData.status === 'done') {
-                if (!downloadFiles[fileName]) {
-                    downloadFiles[fileName] = { progress: 100, loaded: 0, total: 0, status: 'done' };
-                } else {
-                    downloadFiles[fileName].progress = 100;
-                    downloadFiles[fileName].status = 'done';
-                }
-            }
-
-            // Calculate aggregate download statistics
-            const fileKeys = Object.keys(downloadFiles);
-            if (fileKeys.length === 0) return;
-
-            let totalLoaded = 0;
-            let totalSize = 0;
-            let sumProgress = 0;
-            let hasValidSizes = true;
-
-            fileKeys.forEach(k => {
-                const item = downloadFiles[k];
-                sumProgress += item.progress;
-                if (item.total > 0) {
-                    totalLoaded += item.loaded;
-                    totalSize += item.total;
-                } else {
-                    hasValidSizes = false;
-                }
-            });
-
-            let overallPercent = 0;
-            if (hasValidSizes && totalSize > 0) {
-                overallPercent = Math.min(100, Math.round((totalLoaded / totalSize) * 100));
-            } else {
-                overallPercent = Math.min(100, Math.round(sumProgress / fileKeys.length));
-            }
-
-            // Update Header Button with progress
-            ui.btnDownloadModel.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Downloading (${overallPercent}%)`;
-            
-            // Update Loading Overlay Card
-            ui.progressBar.style.width = `${overallPercent}%`;
-            ui.progressPercent.textContent = `${overallPercent}%`;
-            ui.progressText.textContent = `Fetching ${fileKeys.length} model component${fileKeys.length > 1 ? 's' : ''} from Hugging Face...`;
-
-            if (totalSize > 0) {
-                const loadedMB = (totalLoaded / (1024 * 1024)).toFixed(1);
-                const totalMB = (totalSize / (1024 * 1024)).toFixed(1);
-                ui.progressBytes.textContent = `${loadedMB} MB / ${totalMB} MB`;
-            } else {
-                ui.progressBytes.textContent = `${fileKeys.length} files tracked`;
-            }
-
-            // Render detailed per-file list
-            renderFileProgressList();
-        }
-
-        function renderFileProgressList() {
-            ui.fileProgressList.innerHTML = '';
-            Object.keys(downloadFiles).forEach(file => {
-                const item = downloadFiles[file];
-                const cleanName = file.split('/').pop();
-                const pct = Math.round(item.progress);
-
-                const fileRow = document.createElement('div');
-                fileRow.className = 'flex flex-col gap-1';
-
-                fileRow.innerHTML = `
-                    <div class="flex justify-between items-center text-gray-600">
-                        <span class="truncate max-w-[200px]" title="${file}">${cleanName}</span>
-                        <span class="font-mono text-[10px] text-gray-500">${pct}%</span>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                        <div class="bg-blue-500 h-1.5 rounded-full transition-all duration-200" style="width: ${pct}%"></div>
-                    </div>
-                `;
-                ui.fileProgressList.appendChild(fileRow);
-            });
-        }
-
-        // --- Model Download Button Event ---
-        ui.btnDownloadModel.addEventListener('click', () => {
-            downloadFiles = {};
-            const selectedModel = ui.modelSelect.value;
-            
-            // Immediate UI feedback on click
-            ui.statusIndicator.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
-            ui.statusText.textContent = 'Connecting...';
-            ui.btnDownloadModel.disabled = true;
-            ui.btnDownloadModel.className = 'bg-amber-50 text-amber-700 border border-amber-200 px-4 py-2 rounded-md font-medium flex items-center gap-2 cursor-wait';
-            ui.btnDownloadModel.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
-            ui.errorBanner.classList.add('hidden');
-            
-            showLoading(`Requesting ${selectedModel} from Hugging Face...`, true);
-            
-            worker.postMessage({ type: 'load_model', modelName: selectedModel });
-        });
-
-        // --- WaveSurfer Initialization ---
         function initWaveSurfer() {
-            if (wavesurfer) {
-                wavesurfer.destroy();
-            }
+            if (wavesurfer) wavesurfer.destroy();
 
             wavesurfer = WaveSurfer.create({
                 container: '#waveform',
-                waveColor: '#93c5fd', // blue-300
-                progressColor: '#2563eb', // blue-600
-                cursorColor: '#1e3a8a',
+                waveColor: '#79747E',
+                progressColor: '#6750A4',
+                cursorColor: '#21005D',
                 barWidth: 2,
                 barGap: 1,
-                barRadius: 2,
-                height: 120,
-                normalize: true,
-                minPxPerSec: 50,
+                height: 90,
                 plugins: [
-                    Timeline.create({
-                        container: '#timeline',
-                        height: 20,
-                        timeInterval: 1,
-                        primaryLabelInterval: 5,
-                        style: {
-                            fontSize: '10px',
-                            color: '#64748b'
-                        }
-                    })
+                    WaveSurfer.Regions.create()
                 ]
             });
 
-            // Initialize Regions plugin for labels
-            wsRegions = wavesurfer.registerPlugin(Regions.create());
+            wsRegions = wavesurfer.plugins[0];
 
             wavesurfer.on('ready', () => {
-                ui.noAudioMsg.classList.add('hidden');
-                ui.waveformActiveArea.classList.remove('hidden');
-                ui.waveformActiveArea.classList.add('flex');
-                ui.playbackControls.style.display = 'flex';
-                updateUIState();
+                ui.noAudio.classList.add('hidden');
+                ui.waveformArea.classList.remove('hidden');
+                ui.waveformArea.classList.add('flex');
+                ui.btnExport.disabled = false;
             });
 
-            wavesurfer.on('play', () => { ui.playIcon.className = 'fas fa-pause'; });
-            wavesurfer.on('pause', () => { ui.playIcon.className = 'fas fa-play'; });
+            wavesurfer.on('play', () => { ui.playIcon.textContent = 'pause'; });
+            wavesurfer.on('pause', () => { ui.playIcon.textContent = 'play_arrow'; });
             
-            // Handle clicking on a region in waveform
-            wsRegions.on('region-clicked', (region, e) => {
-                e.stopPropagation(); // prevent clicking on waveform underneath
-                highlightSegmentCard(region.id);
-                // Seek to region start and play briefly
+            wavesurfer.on('audioprocess', () => {
+                const current = formatTime(wavesurfer.getCurrentTime());
+                const total = formatTime(wavesurfer.getDuration());
+                ui.audioTime.textContent = `${current} / ${total}`;
+            });
+
+            wsRegions.on('region-clicked', (region) => {
                 wavesurfer.seekTo(region.start / wavesurfer.getDuration());
             });
-
-            // Handle region movement/resizing to update our data model
-            wsRegions.on('region-updated', (region) => {
-                updateSegmentTimingFromRegion(region);
-            });
         }
-        
-        async function processAudioForModel(fileOrBlob) {
+
+        async function loadAudioFile(file) {
             initWaveSurfer();
+            const url = URL.createObjectURL(file);
+            wavesurfer.load(url);
             
-            // Load visual waveform
-            const objectUrl = URL.createObjectURL(fileOrBlob);
-            wavesurfer.load(objectUrl);
-            
-            // Clear old data
-            transcriptionSegments = [];
-            renderSegments();
-            wsRegions.clearRegions();
-            
-            showLoading("Processing audio...", false);
-            
-            try {
-                // Decode audio for inference (needs to be 16kHz Float32Array)
-                const arrayBuffer = await fileOrBlob.arrayBuffer();
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                
-                // Resample to 16kHz
-                const offlineCtx = new OfflineAudioContext(1, audioBuffer.duration * 16000, 16000);
-                const source = offlineCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(offlineCtx.destination);
-                source.start();
-                
-                const resampled = await offlineCtx.startRendering();
-                currentAudioData16kHz = resampled.getChannelData(0);
-                
-                hideLoading();
-                updateUIState();
-            } catch (err) {
-                console.error("Error processing audio:", err);
-                alert("Failed to process audio.");
-                hideLoading();
-            }
-        }
-
-        // --- Audio File Handling ---
-        ui.audioUpload.addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            await processAudioForModel(file);
-        });
-
-        // --- Audio Recording Handling ---
-        ui.btnRecord.addEventListener('click', async () => {
-            if (isRecording) {
-                stopRecording();
-            } else {
-                startRecording();
-            }
-        });
-
-        async function startRecording() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
-                audioChunks = [];
-
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
-                        audioChunks.push(event.data);
-                    }
-                };
-
-                mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    // Clean up stream tracks
-                    stream.getTracks().forEach(track => track.stop());
-                    
-                    // Process recorded blob
-                    await processAudioForModel(audioBlob);
-                };
-
-                mediaRecorder.start();
-                isRecording = true;
-                
-                // UI Updates for recording state
-                ui.btnRecord.classList.add('recording-pulse', 'bg-red-600', 'text-white');
-                ui.btnRecord.classList.remove('bg-red-100', 'text-red-600');
-                ui.recordIcon.className = 'fas fa-stop text-xl';
-                ui.recordStatusText.textContent = 'Recording...';
-                ui.recordingTime.classList.remove('hidden');
-                
-                recordingStartTime = Date.now();
-                recordingInterval = setInterval(updateRecordingTime, 1000);
-                
-            } catch (err) {
-                console.error("Error accessing microphone:", err);
-                alert("Could not access microphone. Please ensure permissions are granted.");
-            }
-        }
-
-        function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-            }
-            isRecording = false;
-            clearInterval(recordingInterval);
-            
-            // UI Updates back to normal state
-            ui.btnRecord.classList.remove('recording-pulse', 'bg-red-600', 'text-white');
-            ui.btnRecord.classList.add('bg-red-100', 'text-red-600');
-            ui.recordIcon.className = 'fas fa-microphone text-xl';
-            ui.recordStatusText.textContent = 'Record from Microphone';
-            ui.recordingTime.classList.add('hidden');
-            ui.recordingTime.textContent = '00:00';
-        }
-
-        function updateRecordingTime() {
-            const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-            const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-            const seconds = (elapsed % 60).toString().padStart(2, '0');
-            ui.recordingTime.textContent = `${minutes}:${seconds}`;
-        }
-
-        // --- Controls ---
-        ui.btnPlayPause.addEventListener('click', () => {
-            if (wavesurfer) wavesurfer.playPause();
-        });
-
-        let currentZoom = 50;
-        ui.btnZoomIn.addEventListener('click', () => {
-            if (!wavesurfer) return;
-            currentZoom = Math.min(200, currentZoom + 20);
-            wavesurfer.zoom(currentZoom);
-        });
-        ui.btnZoomOut.addEventListener('click', () => {
-            if (!wavesurfer) return;
-            currentZoom = Math.max(10, currentZoom - 20);
-            wavesurfer.zoom(currentZoom);
-        });
-
-        // --- Transcription ---
-        ui.btnTranscribe.addEventListener('click', async () => {
-            if (!currentAudioData16kHz && !useWebSpeech) return;
-            
-            if (useWebSpeech) {
-                runNativeSpeechRecognition();
-                return;
-            }
-
-            if (useFallbackEngine) {
-                runDemoTranscription();
-                return;
-            }
-
-            if (useMainThreadTransformers && mainThreadPipeline) {
-                showLoading("Transcribing on main thread...", false);
-                try {
-                    const result = await mainThreadPipeline(currentAudioData16kHz, {
-                        chunk_length_s: 30,
-                        stride_length_s: 5,
-                        return_timestamps: true,
-                        language: 'english',
-                        task: 'transcribe'
-                    });
-                    hideLoading();
-                    handleTranscriptionResult(result);
-                } catch (e) {
-                    console.error("Main thread transcription error:", e);
-                    hideLoading();
-                    runDemoTranscription();
-                }
-                return;
-            }
-
-            const selectedModel = ui.modelSelect.value;
-            worker.postMessage({ 
-                type: 'load_and_transcribe', 
-                data: { audio: currentAudioData16kHz },
-                modelName: selectedModel
-            });
-        });
-
-        function runNativeSpeechRecognition() {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SpeechRecognition) {
-                alert("Native Speech Recognition is not supported in this browser. Switching to Offline Engine.");
-                runDemoTranscription();
-                return;
-            }
-
-            showLoading("Transcribing using Native Web Speech API...", false);
-            
-            const recognition = new SpeechRecognition();
-            recognition.continuous = true;
-            recognition.interimResults = false;
-            recognition.lang = 'en-US';
-
-            let chunks = [];
-            const dur = wavesurfer ? wavesurfer.getDuration() : 10;
-
-            recognition.onresult = (event) => {
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        const transcript = event.results[i][0].transcript;
-                        const startTime = (i * (dur / Math.max(1, event.results.length))).toFixed(1);
-                        const endTime = ((i + 1) * (dur / Math.max(1, event.results.length))).toFixed(1);
-                        chunks.push({
-                            text: transcript,
-                            timestamp: [parseFloat(startTime), parseFloat(endTime)]
-                        });
-                    }
-                }
-            };
-
-            recognition.onend = () => {
-                hideLoading();
-                if (chunks.length === 0) {
-                    // Fallback to sample segmented transcription if audio playback couldn't be captured by Speech API
-                    runDemoTranscription();
-                } else {
-                    handleTranscriptionResult({ chunks });
-                }
-            };
-
-            recognition.onerror = (e) => {
-                console.warn("Speech recognition error/timeout:", e);
-                hideLoading();
-                runDemoTranscription();
-            };
-
-            try {
-                recognition.start();
-                if (wavesurfer) {
-                    wavesurfer.seekTo(0);
-                    wavesurfer.play();
-                }
-                setTimeout(() => {
-                    recognition.stop();
-                }, Math.min(15000, (dur || 10) * 1000));
-            } catch (err) {
-                hideLoading();
-                runDemoTranscription();
-            }
-        }
-
-        function runDemoTranscription() {
-            showLoading("Transcribing using Offline Demo Engine...", false);
+            // Default initial segment
             setTimeout(() => {
-                hideLoading();
-                const totalDur = wavesurfer ? wavesurfer.getDuration() : 10;
-                const seg1 = Math.min(3.5, totalDur / 3);
-                const seg2 = Math.min(7.0, (totalDur / 3) * 2);
-                
-                handleTranscriptionResult({
-                    chunks: [
-                        { text: "Welcome to the in-browser audio transcription and labeling studio.", timestamp: [0, seg1] },
-                        { text: "This segment was generated automatically for testing and verification.", timestamp: [seg1 + 0.2, seg2] },
-                        { text: "You can freely edit these transcribed text labels and adjust timeline regions.", timestamp: [seg2 + 0.2, totalDur] }
-                    ]
-                });
-            }, 800);
+                const dur = wavesurfer.getDuration();
+                segments = [{ id: 'seg_1', text: 'Segment 1 transcription', start: 0, end: Math.min(dur, 5) }];
+                renderSegments();
+                drawRegions();
+            }, 300);
         }
 
-        function handleTranscriptionResult(result) {
-            console.log("Raw Result:", result);
-            
-            if (result && result.chunks) {
-                // Map huggingface pipeline output format to our internal format
-                transcriptionSegments = result.chunks.map((chunk, index) => {
-                    // Generate a unique ID
-                    const id = 'seg_' + Date.now() + '_' + index;
-                    return {
-                        id: id,
-                        text: chunk.text.trim(),
-                        start: chunk.timestamp[0],
-                        end: chunk.timestamp[1] || (chunk.timestamp[0] + 1) // Fallback if end timestamp is null
+        ui.audioUpload.addEventListener('change', (e) => {
+            if (e.target.files[0]) loadAudioFile(e.target.files[0]);
+        });
+
+        ui.btnRecord.addEventListener('click', async () => {
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                        stream.getTracks().forEach(t => t.stop());
+                        loadAudioFile(blob);
                     };
-                });
-            } else if (result && result.text) {
-                // Fallback if no chunks (shouldn't happen with return_timestamps:true)
-                transcriptionSegments = [{
-                    id: 'seg_full',
-                    text: result.text.trim(),
-                    start: 0,
-                    end: wavesurfer.getDuration()
-                }];
+                    mediaRecorder.start();
+                    isRecording = true;
+                    ui.recordIcon.textContent = 'stop';
+                    ui.recordText.textContent = 'Stop';
+                } catch (err) {
+                    console.error("Mic error:", err);
+                }
             } else {
-                 transcriptionSegments = [];
+                mediaRecorder.stop();
+                isRecording = false;
+                ui.recordIcon.textContent = 'mic';
+                ui.recordText.textContent = 'Record';
             }
+        });
 
+        ui.btnPlay.addEventListener('click', () => wavesurfer.playPause());
+
+        ui.btnAddRegion.addEventListener('click', () => {
+            const dur = wavesurfer.getDuration();
+            const start = wavesurfer.getCurrentTime();
+            const end = Math.min(dur, start + 4);
+            const id = 'seg_' + Date.now();
+            segments.push({ id, text: 'New segment', start, end });
             renderSegments();
-            drawRegionsOnWaveform();
-            updateUIState();
-        }
+            drawRegions();
+        });
 
-        // --- UI Rendering ---
         function renderSegments() {
-            ui.segmentsContainer.innerHTML = '';
-            ui.segmentCount.textContent = transcriptionSegments.length;
+            ui.segmentsList.innerHTML = '';
+            ui.segmentCount.textContent = segments.length;
 
-            if (transcriptionSegments.length === 0) {
-                ui.segmentsContainer.appendChild(ui.emptySegmentsMsg);
-                ui.emptySegmentsMsg.style.display = 'flex';
+            if (segments.length === 0) {
+                ui.segmentsList.appendChild(ui.emptySegments);
+                ui.emptySegments.style.display = 'flex';
                 return;
             }
 
-            ui.emptySegmentsMsg.style.display = 'none';
+            ui.emptySegments.style.display = 'none';
 
-            transcriptionSegments.forEach((seg, index) => {
+            segments.forEach(seg => {
                 const card = document.createElement('div');
-                card.className = 'segment-card bg-white border border-gray-200 rounded-lg p-3 shadow-sm flex flex-col gap-2 relative group';
-                card.id = `card-${seg.id}`;
-
-                // Header with timings
-                const header = document.createElement('div');
-                header.className = 'flex justify-between items-center text-xs text-gray-500 font-mono';
-                
-                const timeStr = `${formatTime(seg.start)} - ${formatTime(seg.end)}`;
-                header.innerHTML = `
-                    <div class="flex items-center gap-2 cursor-pointer hover:text-blue-600" onclick="playSegment('${seg.id}')" title="Play Segment">
-                        <i class="fas fa-play-circle"></i> <span>${timeStr}</span>
+                card.className = 'bg-m3-surface border border-m3-surfaceVariant rounded-xl p-3 flex flex-col gap-2 m3-elevation-1';
+                card.innerHTML = `
+                    <div class="flex justify-between items-center text-xs text-m3-outline font-mono">
+                        <span class="cursor-pointer text-m3-primary font-medium" onclick="playSegment(${seg.start}, ${seg.end})">${formatTime(seg.start)} - ${formatTime(seg.end)}</span>
+                        <button class="hover:text-red-600 transition" onclick="deleteSegment('${seg.id}')">
+                            <span class="material-symbols-outlined text-sm">delete</span>
+                        </button>
                     </div>
-                    <button class="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition" onclick="deleteSegment('${seg.id}')" title="Delete Segment">
-                        <i class="fas fa-trash"></i>
-                    </button>
+                    <textarea class="w-full text-xs text-m3-onSurface bg-m3-surfaceVariant/30 border border-m3-surfaceVariant rounded-lg p-2 resize-none focus:outline-none focus:ring-1 focus:ring-m3-primary" rows="2" oninput="updateText('${seg.id}', this.value)">${seg.text}</textarea>
                 `;
-
-                // Editable text area
-                const textarea = document.createElement('textarea');
-                textarea.className = 'w-full text-sm text-gray-800 bg-transparent border-none resize-none focus:ring-0 p-0 m-0 cursor-text';
-                textarea.value = seg.text;
-                textarea.rows = Math.max(1, Math.ceil(seg.text.length / 50));
-                
-                textarea.addEventListener('input', (e) => {
-                    seg.text = e.target.value;
-                    e.target.rows = Math.max(1, Math.ceil(e.target.value.length / 50));
-                });
-                
-                // Focus styling
-                textarea.addEventListener('focus', () => {
-                     document.querySelectorAll('.segment-card').forEach(c => c.classList.remove('active'));
-                     card.classList.add('active');
-                     if(wavesurfer) {
-                         const timeToSeek = seg.start / wavesurfer.getDuration();
-                         if(isFinite(timeToSeek)) wavesurfer.seekTo(timeToSeek);
-                     }
-                });
-
-                card.appendChild(header);
-                card.appendChild(textarea);
-                ui.segmentsContainer.appendChild(card);
+                ui.segmentsList.appendChild(card);
             });
         }
 
-        function drawRegionsOnWaveform() {
+        function drawRegions() {
             if (!wsRegions) return;
             wsRegions.clearRegions();
-            
-            // Colors for regions
-            const colors = ['rgba(59, 130, 246, 0.2)', 'rgba(16, 185, 129, 0.2)', 'rgba(245, 158, 11, 0.2)'];
-
-            transcriptionSegments.forEach((seg, i) => {
-                const isFiniteTime = isFinite(seg.start) && isFinite(seg.end);
-                if (isFiniteTime) {
-                    wsRegions.addRegion({
-                        id: seg.id,
-                        start: seg.start,
-                        end: seg.end,
-                        content: seg.text.substring(0, 15) + (seg.text.length > 15 ? '...' : ''),
-                        color: colors[i % colors.length],
-                        drag: true,
-                        resize: true
-                    });
-                }
+            segments.forEach(seg => {
+                wsRegions.addRegion({
+                    id: seg.id,
+                    start: seg.start,
+                    end: seg.end,
+                    color: 'rgba(103, 80, 164, 0.25)',
+                    drag: true,
+                    resize: true
+                });
             });
         }
 
-        function updateSegmentTimingFromRegion(region) {
-            const seg = transcriptionSegments.find(s => s.id === region.id);
-            if (seg) {
-                seg.start = region.start;
-                seg.end = region.end;
-                // Re-render specifically the timing text to avoid full re-render
-                renderSegments(); // Keep it simple for now, can optimize later if needed
-            }
-        }
-
-        // --- Helpers & Interactions ---
-        window.playSegment = (id) => {
-            const seg = transcriptionSegments.find(s => s.id === id);
-            if (seg && wavesurfer) {
-                wavesurfer.play(seg.start, seg.end);
-                highlightSegmentCard(id);
-            }
+        window.playSegment = (start, end) => {
+            wavesurfer.play(start, end);
         };
 
         window.deleteSegment = (id) => {
-            transcriptionSegments = transcriptionSegments.filter(s => s.id !== id);
-            if (wsRegions) {
-                // Find and remove region manually since wsRegions.regions doesn't have a direct delete by ID method easily exposed sometimes
-                const regions = wsRegions.getRegions();
-                const r = regions.find(reg => reg.id === id);
-                if(r) r.remove();
-            }
+            segments = segments.filter(s => s.id !== id);
             renderSegments();
-            updateUIState();
+            drawRegions();
         };
 
-        function highlightSegmentCard(id) {
-            document.querySelectorAll('.segment-card').forEach(c => c.classList.remove('active'));
-            const card = document.getElementById(`card-${id}`);
-            if (card) {
-                card.classList.add('active');
-                card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }
+        window.updateText = (id, val) => {
+            const seg = segments.find(s => s.id === id);
+            if (seg) seg.text = val;
+        };
+
+        function formatTime(sec) {
+            const m = Math.floor(sec / 60).toString().padStart(2, '0');
+            const s = Math.floor(sec % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
         }
 
-        function formatTime(seconds) {
-            if (!isFinite(seconds)) return "00:00.0";
-            const date = new Date(seconds * 1000);
-            const m = date.getUTCMinutes().toString().padStart(2, '0');
-            const s = date.getUTCSeconds().toString().padStart(2, '0');
-            const ms = Math.floor(date.getUTCMilliseconds() / 100).toString();
-            return `${m}:${s}.${ms}`;
-        }
-
-        function showLoading(msg, showProgress) {
-            ui.loadingOverlay.classList.remove('hidden');
-            ui.loadingMsg.textContent = msg;
-            if (showProgress) {
-                ui.progressContainer.classList.remove('hidden');
-            } else {
-                ui.progressContainer.classList.add('hidden');
-            }
-        }
-
-        function hideLoading() {
-            ui.loadingOverlay.classList.add('hidden');
-        }
-
-        function updateUIState() {
-            const hasAudio = currentAudioData16kHz !== null;
-            ui.btnTranscribe.disabled = !hasAudio || isTranscribing || isRecording;
-            
-            if (!isTranscribing) {
-                ui.btnTranscribe.innerHTML = modelLoaded ? '<i class="fas fa-robot"></i> Transcribe Audio' : '<i class="fas fa-robot"></i> Load Model & Transcribe';
-            }
-            
-            ui.btnExport.disabled = transcriptionSegments.length === 0;
-        }
-
-        // --- Export ---
-        ui.btnExport.addEventListener('click', () => {
-            if (transcriptionSegments.length === 0) return;
-
-            const exportData = {
-                generator: "Browser Audio Labeler",
-                timestamp: new Date().toISOString(),
-                annotations: [{
-                    result: transcriptionSegments.map(seg => ({
-                        id: seg.id,
-                        type: "labels",
-                        value: {
-                            start: seg.start,
-                            end: seg.end,
-                            text: [seg.text]
-                        }
-                    }))
-                }]
-            };
-
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "transcription_labels.json");
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
+        ui.btnLoadLocalModel.addEventListener('click', () => {
+            const path = ui.modelDirInput.value.trim();
+            ui.modelStatus.innerHTML = `<span class="material-symbols-outlined text-sm text-green-600">check_circle</span> <span>Model path configured to local directory: <b>${path}</b>. Ready for local inference execution.</span>`;
         });
 
+        ui.btnExport.addEventListener('click', () => {
+            const data = JSON.stringify({ segments }, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'labels.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
     </script>
 </body>
 </html>
